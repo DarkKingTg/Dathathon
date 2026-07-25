@@ -1,0 +1,10 @@
+{
+  "name": "KSP-Chanakya Tactical Intelligence",
+  "description": "Karnataka State Police Digital Intelligence Division platform featuring Graph Link Analytics, MO Semantic Search, Voice Field Queries, and Cryptographic PDF Case Dossier Exporter.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

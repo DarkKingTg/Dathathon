@@ -1,0 +1,132 @@
+Module 1: Polyglot Database Schema & Data Models
+1. Structured Database Setup (PostgreSQL)
+Define Relational Schemas: Create relational tables for core law enforcement entities using SQLAlchemy ORM:  
+firs (Primary Key: fir_id, district, station_code, bns_section, ipc_section_legacy, incident_date, status).  
+persons (Primary Key: person_id, full_name, dob, gender, father_name, clearance_level).  
+locations (location_id, fir_id, latitude, longitude, address, district).  
+vehicles (vehicle_id, fir_id, registration_number, vehicle_type, model).  
+phone_accounts (phone_id, fir_id, phone_number, imei).  
+bank_accounts (account_id, fir_id, bank_name, account_number, ifsc_code).  
+Foreign Key Constraints & Indexing: Enforce foreign keys linked via universal identifiers FIR_ID and Person_ID across all entity tables. Index district, incident_date, and bns_section for sub-second database filtering.  
+2. Graph Database Setup (Neo4j)
+Define Node Labels: Configure nodes for Person, FIR, Location, Vehicle, PhoneAccount, and BankAccount. Each node must store its primary key (person_id or fir_id).  
+Define Relationship Types:
+(:Person)-[:ACCUSED_IN {role: text}]->(:FIR)
+  
+(:Person)-[:ASSOCIATED_WITH {relationship_type: text}]->(:Person)
+  
+(:FIR)-[:OCCURRED_AT]->(:Location)
+  
+(:FIR)-[:INVOLVED_VEHICLE]->(:Vehicle)
+  
+(:FIR)-[:LINKED_PHONE]->(:PhoneAccount)
+  
+(:FIR)-[:LINKED_BANK_ACCOUNT]->(:BankAccount)
+  
+Constraint Enforcement: Enforce unique constraints on node IDs (person_id, fir_id) and build indexes on node attributes for graph traversals up to 3+ hops.  
+3. Vector Database Setup (Qdrant)
+Collection Configuration: Create a vector collection dedicated to Modus Operandi (MO) narratives.  
+Indexing & Payload Strategy: Use HNSW (Hierarchical Navigable Small World) indexing for fast approximate nearest neighbor searches. Store fir_id, district, and bns_section inside the vector payload alongside the dense embeddings.  
+Module 2: Security, ABAC & PII Redaction Middleware
+1. OAuth2 Authentication & Identity Validation
+JWT Service: Implement an authentication module using OAuth2 bearer tokens with 15-minute token expirations and refresh rotation.  
+Multi-Factor Authentication (MFA): Enforce MFA checks for analyst and leadership endpoints.  
+2. Field-Level ABAC & RBAC Middleware
+Access Control Evaluator: Intercept incoming API requests at the gateway level to check user attributes (home_district, clearance_level, role) against target record attributes.  
+Dynamic Query Filtering: Automatically attach WHERE district = user_district filters for station-level users, while granting multi-district aggregate access to leadership.  
+Data Redaction Engine: Mask sensitive attributes (e.g., informant identity, POCSO-protected minor details) dynamically before payload serialization if user clearance is below required thresholds.  
+3. PII Sanitization Pre-processor
+Pattern-Based Scrubbing: Implement regex rules to detect and redact Aadhaar numbers, PAN numbers, and contact details.  
+NER-Based Anonymization: Route raw text input through NER models (spaCy/GLINER) to strip names, specific addresses, and protected identities before supplying prompt contexts to LLMs.  
+Module 3: Dual Intelligence Pipelines & Query Routing Engine
+                             ┌────────────────┐
+                             │  User Query    │
+                             └───────┬────────┘
+                                     │
+                         ┌───────────▼───────────┐
+                         │  Intent Classifier    │
+                         └─────┬───────────┬─────┘
+                               │           │
+            ┌──────────────────┘           └──────────────────┐
+            │ Aggregate / Structured                          │ Relational / Multi-hop
+            ▼                                                 ▼
+┌───────────────────────┐                         ┌───────────────────────┐
+│   Text-to-SQL         │                         │   Text-to-Cypher      │
+│  (PostgreSQL Router)  │                         │    (Neo4j Router)     │
+└───────────┬───────────┘                         └───────────┬───────────┘
+            │                                                 │
+            │ Validated SQL                                   │ Validated Cypher
+            ▼                                                 ▼
+┌───────────────────────┐                         ┌───────────────────────┐
+│  PostgreSQL Query     │                         │  Neo4j Query          │
+│  Execution Engine     │                         │  Execution Engine     │
+└───────────┬───────────┘                         └───────────┬───────────┘
+            │                                                 │
+            └──────────────────┐           ┌──────────────────┘
+                               │ Results   │ Results
+                               ▼           ▼
+                         ┌───────────────────────┐
+                         │ XAI Synthesizer Engine│
+                         └───────────────────────┘
+1. Intent Classification Router
+Query Classification Logic: Build an intent classifier microservice to parse the incoming query and determine execution path:  
+Route aggregate/filtering queries (e.g., count, date ranges, FIR details) to the Text-to-SQL Pipeline.  
+Route link analysis/relationship queries (e.g., indirect connections, associate networks) to the Text-to-Cypher Pipeline.  
+2. Text-to-SQL Pipeline
+Prompt Parameterization: Construct schema-constrained prompts containing allowable PostgreSQL table structures.  
+Structured Generation: Call the LLM serving engine (vLLM/TGI) using constrained decoding frameworks (Guidance/Outlines) to restrict generation strictly to valid SQL syntax.  
+SQL Validation Engine: Parse generated SQL query ASTs (Abstract Syntax Trees) against allow-listed tables/columns prior to execution. Reject and route to Fallback Service if validation fails.  
+3. Text-to-Cypher Pipeline
+Template-Constrained Cypher Generation: Generate Neo4j Cypher statements mapped strictly against pre-defined graph templates.  
+Validation & Execution Rules: Enforce schema validation on generated Cypher queries. Execute with a hard 10-second query execution timeout on Neo4j.  
+4. Fallback & Query Refinement Service
+Validation Failure Handling: When generated SQL or Cypher fails schema validation, prevent execution and trigger the Fallback Service.  
+Template Suggestion Engine: Match user intent against a pre-canned, role-scoped template library and return "Query Refinement Suggestions" to the client.  
+Module 4: Advanced AI Services & XAI Synthesizer
+1. Indic Speech Processing Service (STT/TTS)
+Speech-to-Text Pipeline: Accept incoming Kannada/English audio streams, feed them into fine-tuned Whisper model instances, and output transcribed text with domain-specific vocabulary recognition.  
+Confidence Gating: Calculate transcription confidence scores. If confidence falls below 0.7, set confirmation_required: True in the API payload to request user confirmation.  
+Text-to-Speech Engine: Synthesize generated output text into audio streams via AI4Bharat/Sarvam TTS endpoints.  
+2. MO Vector Similarity Search Engine
+Embedding Generator: Pass incoming Modus Operandi (MO) descriptive queries through multilingual embedding models (IndicBERT/sentence-transformers).  
+Qdrant Similarity Query: Perform vector similarity searches against Qdrant using cosine similarity with a configurable default threshold of 0.75.  
+Payload Mapping: Extract matched FIR_IDs and similarity scores, flagging all outputs with investigative_lead: True.  
+3. Explainable AI (XAI) Provenance Synthesizer
+Field-Restricted Response Synthesis: Synthesize database query results into clear textual responses using an LLM restricted strictly to fields present within the validated result set (zero extrapolation permitted).  
+Citation Attachment: Construct a mandatory evidence_trail object appending:  
+Referenced FIR_IDs.  
+Applicable legal codes (BNS 2023 / IPC sections).  
+Generated and executed SQL/Cypher statements.  
+Execution duration and record timestamps.  
+Mandatory Flagging: Force append the flag verification_required: True to all synthesized investigative leads.  
+Module 5: Data Ingestion & ETL Pipeline
+1. Extraction & Sanitization (Stages 1 & 2)
+JDBC Connectors: Establish scheduled batch jobs (Apache Airflow/Celery) pulling incremental data from CCTNS and SCRB databases via timestamp-based Change Data Capture (CDC).  
+Transformation & Deduplication: Run fuzzy-matching algorithms on (Name + DOB + Father's Name) to handle record deduplication. Pass raw text fields through the PII Redaction Pipeline.  
+2. Multi-Store Synchronized Loading (Stages 3, 4 & 5)
+PostgreSQL Loading: Execute high-performance bulk operations (COPY) to write structured records directly to PostgreSQL.  
+Async Neo4j Enrichment: Trigger Celery background workers to process newly inserted records into Neo4j graph nodes and relationships (e.g., link persons sharing bank accounts or phone numbers).  
+Async Qdrant Vector Loading: Chunk sanitized MO text fields (>512 tokens), pass through embedding models via batch processing, and upsert vector representations into Qdrant indexed by FIR_ID.  
+Module 6: Core API Endpoints & Audit System
+1. API Route Implementations
+POST /api/v1/query/natural-language
+Inputs: query_text, language_code (en/kn), session_token, session_context_id.  
+Logic: Routes query $\rightarrow$ Executes SQL/Cypher pipeline $\rightarrow$ Synthesizes response via XAI Engine.  
+Outputs: synthesized_text, tts_audio_url, graph_payload, citation_metadata, verification_required.  
+POST /api/v1/query/graph
+Inputs: cypher_query, user_jurisdiction.  
+Logic: Validates query syntax $\rightarrow$ Enforces graph timeout $\rightarrow$ Fetches node/edge subgraph.  
+Outputs: nodes, edges, source_fir_references, community_labels.  
+POST /api/v1/search/mo
+Inputs: mo_text, similarity_threshold (default 0.75), district_filter.  
+Logic: Generates dense embedding vector $\rightarrow$ Searches Qdrant $\rightarrow$ Returns ranked matching cases.  
+POST /api/v1/dossier/export
+Inputs: session_id, graph_snapshot_ids, user_role.  
+Logic: Fetches session chat history, citation trails, and graph snapshots $\rightarrow$ Compiles court-ready PDF in $<10$ seconds.  
+Outputs: Signed PDF download URL watermarked with user_id, timestamp, and "Analyst Verification Required" disclaimer.  
+2. Immutable Cryptographic Audit Logger
+Append-Only Merkle Tree Service: Write every API invocation, executed query, accessed record ID, user ID, and timestamp into an append-only audit record.  
+SHA-256 Cryptographic Chaining: Chain each audit entry to the preceding record using a SHA-256 Merkle root computation to render logs tamper-evident.  
+GET /api/v1/audit/logs Endpoint: Expose an admin-only endpoint to verify Merkle root consistency and retrieve audit trails.
+
+
